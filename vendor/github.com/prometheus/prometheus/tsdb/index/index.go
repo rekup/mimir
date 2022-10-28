@@ -1090,6 +1090,8 @@ type Reader struct {
 
 	// Provides a cache mapping series labels hash by series ID.
 	cacheProvider ReaderCacheProvider
+
+	shardFunc func(l labels.Labels) uint64 // Computes a hash of Labels; must be consistent over time.
 }
 
 type postingOffset struct {
@@ -1130,11 +1132,11 @@ func NewReaderWithCache(b ByteSlice, cacheProvider ReaderCacheProvider) (*Reader
 
 // NewFileReader returns a new index reader against the given index file.
 func NewFileReader(path string) (*Reader, error) {
-	return NewFileReaderWithCache(path, nil)
+	return NewFileReaderWithOptions(path, nil, nil)
 }
 
-// NewFileReaderWithCache is like NewFileReader but allows to pass a cache provider.
-func NewFileReaderWithCache(path string, cacheProvider ReaderCacheProvider) (*Reader, error) {
+// NewFileReaderWithOptions is like NewFileReader but allows to pass a cache provider and sharding function.
+func NewFileReaderWithOptions(path string, cacheProvider ReaderCacheProvider, shardFunc func(l labels.Labels) uint64) (*Reader, error) {
 	f, err := fileutil.OpenMmapFile(path)
 	if err != nil {
 		return nil, err
@@ -1146,6 +1148,7 @@ func NewFileReaderWithCache(path string, cacheProvider ReaderCacheProvider) (*Re
 			f.Close(),
 		).Err()
 	}
+	r.shardFunc = shardFunc
 
 	return r, nil
 }
@@ -1771,7 +1774,7 @@ func (r *Reader) ShardedPostings(p Postings, shardIndex, shardCount uint64) Post
 				return ErrPostings(errors.Errorf("series %d not found", id))
 			}
 
-			hash = bufLbls.Labels().Hash()
+			hash = r.shardFunc(bufLbls.Labels())
 			if seriesHashCache != nil {
 				seriesHashCache.Store(id, hash)
 			}
@@ -1910,9 +1913,6 @@ func (dec *Decoder) LabelValueFor(b []byte, label string) (string, error) {
 // Previous contents of builder can be overwritten - make sure you copy before retaining.
 func (dec *Decoder) Series(b []byte, builder *labels.ScratchBuilder, chks *[]chunks.Meta) error {
 	builder.Reset()
-	if chks != nil {
-		*chks = (*chks)[:0]
-	}
 
 	d := encoding.Decbuf{B: b}
 
@@ -1954,7 +1954,7 @@ func (dec *Decoder) Series(b []byte, builder *labels.ScratchBuilder, chks *[]chu
 	maxt := int64(d.Uvarint64()) + t0
 	ref0 := int64(d.Uvarint64())
 
-	*chks = append(*chks, chunks.Meta{
+	*chks = append((*chks)[:0], chunks.Meta{
 		Ref:     chunks.ChunkRef(ref0),
 		MinTime: t0,
 		MaxTime: maxt,
