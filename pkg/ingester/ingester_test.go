@@ -4774,7 +4774,8 @@ func generateSamplesForLabel(baseLabels labels.Labels, series, samples int) *mim
 	ss := make([]mimirpb.Sample, 0, series*samples)
 
 	for s := 0; s < series; s++ {
-		l := append(labels.FromStrings("series", strconv.Itoa(s)), baseLabels...)
+		b := labels.NewBuilder(baseLabels).Set("series", strconv.Itoa(s))
+		l := b.Labels(labels.EmptyLabels())
 		for i := 0; i < samples; i++ {
 			ss = append(ss, mimirpb.Sample{
 				Value:       float64(i),
@@ -5309,12 +5310,8 @@ func benchmarkData(nSeries int) (allLabels []labels.Labels, allSamples []mimirpb
 	)
 
 	for j := 0; j < nSeries; j++ {
-		labels := benchmarkLabels.Copy()
-		for i := range labels {
-			if labels[i].Name == "cpu" {
-				labels[i].Value = fmt.Sprintf("cpu%02d", j)
-			}
-		}
+		b := labels.NewBuilder(benchmarkLabels).Set("cpu", fmt.Sprintf("cpu%02d", j))
+		labels := b.Labels(labels.EmptyLabels())
 		allLabels = append(allLabels, labels)
 		allSamples = append(allSamples, mimirpb.Sample{TimestampMs: 0, Value: float64(j)})
 	}
@@ -6705,7 +6702,7 @@ func TestIngester_PushAndQueryEphemeral(t *testing.T) {
 					mimirpb.API),
 
 				ToWriteRequestEphemeral(
-					[]labels.Labels{{{Name: labels.MetricName, Value: "second metric"}}},
+					[]labels.Labels{labels.FromStrings(labels.MetricName, "second metric")},
 					[]mimirpb.Sample{{Value: 2, TimestampMs: now.UnixMilli()}},
 					nil,
 					nil,
@@ -6903,7 +6900,7 @@ func TestIngesterTruncationOfEphemeralSeries(t *testing.T) {
 	// This is a function, because i.Push() cleans up the passed request, but we want to reuse it.
 	oldReq := func() *mimirpb.WriteRequest {
 		return ToWriteRequestEphemeral(
-			[]labels.Labels{{{Name: labels.MetricName, Value: "test"}}},
+			[]labels.Labels{labels.FromStrings(labels.MetricName, "test")},
 			[]mimirpb.Sample{{Value: float64(100), TimestampMs: oldTS}},
 			nil,
 			nil,
@@ -6955,7 +6952,7 @@ func TestIngesterTruncationOfEphemeralSeries(t *testing.T) {
 	// This is a function because i.Push cleans up the request, but we want to reuse it.
 	newReq := func() *mimirpb.WriteRequest {
 		return ToWriteRequestEphemeral(
-			[]labels.Labels{{{Name: labels.MetricName, Value: "new-metric"}}},
+			[]labels.Labels{labels.FromStrings(labels.MetricName, "new-metric")},
 			[]mimirpb.Sample{{Value: float64(500), TimestampMs: now.UnixMilli()}},
 			nil,
 			nil,
