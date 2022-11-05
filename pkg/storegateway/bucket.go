@@ -627,6 +627,7 @@ func blockSeries(
 			symbolizedLset []symbolizedLabel
 			chks           []chunks.Meta
 			postingsStats  = &queryStats{}
+			builder        labels.ScratchBuilder
 		)
 
 		// Keep track of postings lookup stats in a dedicated stats structure that doesn't require lock
@@ -647,7 +648,7 @@ func blockSeries(
 				continue
 			}
 
-			lset, err := indexr.LookupLabelsSymbols(symbolizedLset)
+			lset, err := indexr.LookupLabelsSymbols(symbolizedLset, &builder)
 			if err != nil {
 				lookupErr = errors.Wrap(err, "lookup labels symbols")
 				return
@@ -1311,9 +1312,9 @@ func blockLabelNames(ctx context.Context, indexr *bucketIndexReader, matchers []
 	labelNames := map[string]struct{}{}
 	for seriesSet.Next() {
 		ls, _ := seriesSet.At()
-		for _, l := range ls {
+		ls.Range(func(l labels.Label) {
 			labelNames[l.Name] = struct{}{}
-		}
+		})
 	}
 	if seriesSet.Err() != nil {
 		return nil, errors.Wrap(seriesSet.Err(), "iterate series")
