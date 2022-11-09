@@ -196,7 +196,7 @@ func GatherIndexHealthStats(logger log.Logger, blockDir string, minTime, maxTime
 
 	// Per series.
 	for p.Next() {
-		lastLset = append(lastLset[:0], lset...)
+		lastLset.CopyFrom(lset)
 
 		id := p.At()
 		stats.TotalSeries++
@@ -205,15 +205,15 @@ func GatherIndexHealthStats(logger log.Logger, blockDir string, minTime, maxTime
 			return stats, errors.Wrap(err, "read series")
 		}
 		lset = builder.Labels()
-		if len(lset) == 0 {
+		if lset.IsEmpty() {
 			return stats, errors.Errorf("empty label set detected for series %d", id)
 		}
-		if lastLset != nil && labels.Compare(lastLset, lset) >= 0 {
+		if !lastLset.IsEmpty() && labels.Compare(lastLset, lset) >= 0 {
 			return stats, errors.Errorf("series %v out of order; previous %v", lset, lastLset)
 		}
-		l0 := lset[0]
-		for _, l := range lset[1:] {
-			if l.Name < l0.Name {
+		var l0 string
+		lset.Range(func(l labels.Label) {
+			if l.Name < l0 {
 				stats.OutOfOrderLabels++
 				level.Warn(logger).Log("msg",
 					"out-of-order label set: known bug in Prometheus 2.8.0 and below",
@@ -221,8 +221,8 @@ func GatherIndexHealthStats(logger log.Logger, blockDir string, minTime, maxTime
 					"series", fmt.Sprintf("%d", id),
 				)
 			}
-			l0 = l
-		}
+			l0 = l.Name
+		})
 		if len(chks) == 0 {
 			return stats, errors.Errorf("empty chunks for series %d", id)
 		}
