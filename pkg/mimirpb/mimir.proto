@@ -104,14 +104,12 @@ message Histogram {
 
   repeated BucketSpan negative_spans =  8;
   repeated sint64 negative_deltas    =  9;
-  repeated double negative_counts    = 10;
 
-  repeated BucketSpan positive_spans = 11;
-  repeated sint64 positive_deltas    = 12;
-  repeated double positive_counts    = 13;
+  repeated BucketSpan positive_spans = 10;
+  repeated sint64 positive_deltas    = 11;
 
-  ResetHint reset_hint               = 14;
-  int64 timestamp = 15;
+  ResetHint reset_hint               = 12;
+  int64 timestamp = 13;
 }
 
 message BucketSpan {
