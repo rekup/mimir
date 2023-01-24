@@ -17,23 +17,27 @@ package featuregate // import "go.opentelemetry.io/collector/featuregate"
 import (
 	"fmt"
 	"sync"
+
+	"go.uber.org/atomic"
 )
 
-var reg = NewRegistry()
+var globalRegistry = NewRegistry()
 
-// GetRegistry returns the global Registry.
-func GetRegistry() *Registry {
-	return reg
+// Deprecated: [v0.70.0] use GlobalRegistry.
+var GetRegistry = GlobalRegistry
+
+// GlobalRegistry returns the global Registry.
+func GlobalRegistry() *Registry {
+	return globalRegistry
 }
 
 type Registry struct {
-	mu    sync.RWMutex
-	gates map[string]Gate
+	gates sync.Map
 }
 
 // NewRegistry returns a new empty Registry.
 func NewRegistry() *Registry {
-	return &Registry{gates: make(map[string]Gate)}
+	return &Registry{}
 }
 
 // RegistryOption allows to configure additional information about a Gate during registration.
@@ -41,67 +45,59 @@ type RegistryOption interface {
 	apply(g *Gate)
 }
 
-type registerOption struct {
-	applyFunc func(g *Gate)
-}
+type registerOptionFunc func(g *Gate)
 
-func (ro registerOption) apply(g *Gate) {
-	ro.applyFunc(g)
+func (ro registerOptionFunc) apply(g *Gate) {
+	ro(g)
 }
 
 // WithRegisterDescription adds description for the Gate.
 func WithRegisterDescription(description string) RegistryOption {
-	return registerOption{
-		applyFunc: func(g *Gate) {
-			g.description = description
-		},
-	}
+	return registerOptionFunc(func(g *Gate) {
+		g.description = description
+	})
 }
 
 // WithRegisterReferenceURL adds an URL that has all the contextual information about the Gate.
 func WithRegisterReferenceURL(url string) RegistryOption {
-	return registerOption{
-		applyFunc: func(g *Gate) {
-			g.referenceURL = url
-		},
-	}
+	return registerOptionFunc(func(g *Gate) {
+		g.referenceURL = url
+	})
 }
 
 // WithRegisterRemovalVersion is used when the Gate is considered StageStable,
 // to inform users that referencing the gate is no longer needed.
 func WithRegisterRemovalVersion(version string) RegistryOption {
-	return registerOption{
-		applyFunc: func(g *Gate) {
-			g.removalVersion = version
-		},
-	}
+	return registerOptionFunc(func(g *Gate) {
+		g.removalVersion = version
+	})
 }
 
 // Apply a configuration in the form of a map of Gate identifiers to boolean values.
 // Sets only those values provided in the map, other gate values are not changed.
 func (r *Registry) Apply(cfg map[string]bool) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	for id, val := range cfg {
-		g, ok := r.gates[id]
+		v, ok := r.gates.Load(id)
 		if !ok {
 			return fmt.Errorf("feature gate %s is unregistered", id)
 		}
+		g := v.(*Gate)
 		if g.stage == StageStable {
 			return fmt.Errorf("feature gate %s is stable, can not be modified", id)
 		}
-		g.enabled = val
-		r.gates[g.id] = g
+		g.enabled.Store(val)
 	}
 	return nil
 }
 
 // IsEnabled returns true if a registered feature gate is enabled and false otherwise.
 func (r *Registry) IsEnabled(id string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	g, ok := r.gates[id]
-	return ok && g.enabled
+	v, ok := r.gates.Load(id)
+	if !ok {
+		return false
+	}
+	g := v.(*Gate)
+	return g.enabled.Load()
 }
 
 // MustRegisterID like RegisterID but panics if an invalid ID or gate options are provided.
@@ -112,43 +108,36 @@ func (r *Registry) MustRegisterID(id string, stage Stage, opts ...RegistryOption
 }
 
 func (r *Registry) RegisterID(id string, stage Stage, opts ...RegistryOption) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.gates[id]; ok {
-		return fmt.Errorf("attempted to add pre-existing gate %q", id)
-	}
-	g := Gate{
+	g := &Gate{
 		id:    id,
 		stage: stage,
 	}
 	for _, opt := range opts {
-		opt.apply(&g)
+		opt.apply(g)
 	}
 	switch g.stage {
 	case StageAlpha:
-		g.enabled = false
+		g.enabled = atomic.NewBool(false)
 	case StageBeta, StageStable:
-		g.enabled = true
+		g.enabled = atomic.NewBool(true)
 	default:
 		return fmt.Errorf("unknown stage value %q for gate %q", stage, id)
 	}
 	if g.stage == StageStable && g.removalVersion == "" {
 		return fmt.Errorf("no removal version set for stable gate %q", id)
 	}
-	r.gates[id] = g
+	if _, loaded := r.gates.LoadOrStore(id, g); loaded {
+		return fmt.Errorf("attempted to add pre-existing gate %q", id)
+	}
 	return nil
 }
 
 // List returns a slice of copies of all registered Gates.
 func (r *Registry) List() []Gate {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	ret := make([]Gate, len(r.gates))
-	i := 0
-	for _, gate := range r.gates {
-		ret[i] = gate
-		i++
-	}
-
+	var ret []Gate
+	r.gates.Range(func(key, value any) bool {
+		ret = append(ret, *(value.(*Gate)))
+		return true
+	})
 	return ret
 }

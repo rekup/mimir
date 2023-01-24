@@ -5,6 +5,8 @@
 ### Grafana Mimir
 
 * [ENHANCEMENT] Compactor: Add `reason` label to `cortex_compactor_runs_failed_total`. The value can be `shutdown` or `error`. #4012
+* [ENHANCEMENT] OTLP: Add support for converting OTel Exponential Histograms to Prometheus Native Histograms.
+* [BUGFIX] OTLP: Do not drop exemplars of the OTLP Monotonic Sum metric.
 
 ### Mixin
 
