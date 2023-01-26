@@ -265,10 +265,7 @@ api:
 }
 
 func TestIsEphemeral(t *testing.T) {
-	labelBuilder := labels.NewBuilder(nil)
-	labelBuilder.Set("__name__", "test_metric")
-	labelBuilder.Set("testLabel1", "testValue1")
-	testLabels := mimirpb.FromLabelsToLabelAdapters(labelBuilder.Labels(nil))
+	testLabels := mimirpb.FromLabelsToLabelAdapters(labels.FromStrings("__name__", "test_metric", "testLabel1", "testValue1"))
 
 	type testCase struct {
 		name         string
