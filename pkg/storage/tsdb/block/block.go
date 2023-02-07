@@ -40,6 +40,12 @@ const (
 
 	// DebugMetas is a directory for debug meta files that happen in the past. Useful for debugging.
 	DebugMetas = "debug/metas"
+
+	// OutOfOrderExternalLabelKey is the external label used to mark blocks as containing out-of-order data
+	OutOfOrderExternalLabelKey = "__out_of_order__"
+
+	// OutOfOrderExternalLabelValue is the value to be used for the OutOfOrderExternalLabelKey label
+	OutOfOrderExternalLabelValue = "true"
 )
 
 // Download downloads directory that is mean to be block directory. If any of the files
@@ -107,6 +113,12 @@ func Upload(ctx context.Context, logger log.Logger, bkt objstore.Bucket, blockDi
 	meta.Thanos.Files, err = GatherFileStats(blockDir)
 	if err != nil {
 		return errors.Wrap(err, "gather meta file stats")
+	}
+
+	// Set out of order labels
+	if meta.Compaction.FromOutOfOrder() {
+		// At this point the OOO data was already ingested and compacted, so there's no point in checking for the OOO feature flag
+		meta.Thanos.Labels[OutOfOrderExternalLabelKey] = OutOfOrderExternalLabelValue
 	}
 
 	metaEncoded := strings.Builder{}

@@ -306,6 +306,31 @@ func TestUpload(t *testing.T) {
 		require.Equal(t, updatedMeta.Thanos.Labels, bucketMeta.Thanos.Labels)
 		require.Equal(t, updatedMeta.Thanos.Source, bucketMeta.Thanos.Source)
 	})
+
+	t.Run("upload out of order block includes labels", func(t *testing.T) {
+		// Create a block marked as OOO
+		b3, err := testhelper.CreateBlock(ctx, tmpDir, []labels.Labels{
+			labels.FromStrings("a", "1"),
+			labels.FromStrings("a", "2"),
+			labels.FromStrings("a", "3"),
+			labels.FromStrings("a", "4"),
+			labels.FromStrings("b", "1"),
+		}, 100, 0, 1000, labels.EmptyLabels())
+		require.NoError(t, err)
+		updatedMeta, err := metadata.ReadFromDir(path.Join(tmpDir, b3.String()))
+		require.NoError(t, err)
+		require.Empty(t, updatedMeta.Thanos.Labels)
+		updatedMeta.Compaction.SetOutOfOrder()
+
+		// Upload it
+		err = Upload(ctx, log.NewNopLogger(), bkt, path.Join(tmpDir, b3.String()), updatedMeta)
+		require.NoError(t, err)
+
+		// Verify that meta.json uploaded in the bucket has the OOO label
+		bucketMeta, err := DownloadMeta(context.Background(), log.NewNopLogger(), bkt, b3)
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{OutOfOrderExternalLabelKey: OutOfOrderExternalLabelValue}, bucketMeta.Thanos.Labels)
+	})
 }
 
 func getFileSize(t *testing.T, filepath string) int64 {
