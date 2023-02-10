@@ -49,7 +49,7 @@ func TestShipper(t *testing.T) {
 	logs := &concurrency.SyncBuffer{}
 	logger := log.NewLogfmtLogger(logs)
 
-	s := NewShipper(logger, nil, blocksDir, bkt, metadata.TestSource)
+	s := NewShipper(logger, nil, blocksDir, bkt, metadata.TestSource, false)
 
 	t.Run("no shipper file yet", func(t *testing.T) {
 		// No shipper file = nothing is reported as shipped.
@@ -189,7 +189,7 @@ func TestShipper_DeceivingUploadErrors(t *testing.T) {
 	bkt = deceivingUploadBucket{Bucket: bkt, objectBaseName: block.MetaFilename}
 
 	logger := log.NewLogfmtLogger(os.Stderr)
-	s := NewShipper(logger, nil, blocksDir, bkt, metadata.TestSource)
+	s := NewShipper(logger, nil, blocksDir, bkt, metadata.TestSource, false)
 
 	// Create and upload a block
 	id1 := ulid.MustNew(1, nil)
@@ -254,7 +254,7 @@ func TestIterBlockMetas(t *testing.T) {
 		},
 	}.WriteToDir(log.NewNopLogger(), path.Join(dir, id3.String())))
 
-	shipper := NewShipper(nil, nil, dir, nil, metadata.TestSource)
+	shipper := NewShipper(nil, nil, dir, nil, metadata.TestSource, false)
 	metas, err := shipper.blockMetasFromOldest()
 	require.NoError(t, err)
 	require.Equal(t, sort.SliceIsSorted(metas, func(i, j int) bool {
@@ -267,7 +267,7 @@ func TestShipperAddsSegmentFiles(t *testing.T) {
 
 	inmemory := objstore.NewInMemBucket()
 
-	s := NewShipper(nil, nil, dir, inmemory, metadata.TestSource)
+	s := NewShipper(nil, nil, dir, inmemory, metadata.TestSource, false)
 
 	id := ulid.MustNew(1, nil)
 	blockDir := path.Join(dir, id.String())

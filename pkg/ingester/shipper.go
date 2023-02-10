@@ -29,6 +29,14 @@ import (
 	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
 )
 
+const (
+	// OutOfOrderExternalLabelKey is the external label used to mark blocks as containing out-of-order data
+	OutOfOrderExternalLabelKey = "__out_of_order__"
+
+	// OutOfOrderExternalLabelValue is the value to be used for the OutOfOrderExternalLabelKey label
+	OutOfOrderExternalLabelValue = "true"
+)
+
 type metrics struct {
 	dirSyncs                 prometheus.Counter
 	dirSyncFailures          prometheus.Counter
@@ -68,11 +76,12 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 // them to a remote data store.
 // Shipper implements BlocksUploader interface.
 type Shipper struct {
-	logger  log.Logger
-	dir     string
-	metrics *metrics
-	bucket  objstore.Bucket
-	source  metadata.SourceType
+	logger      log.Logger
+	dir         string
+	metrics     *metrics
+	bucket      objstore.Bucket
+	source      metadata.SourceType
+	addOOOLabel bool
 }
 
 // NewShipper creates a new uploader that detects new TSDB blocks in dir and uploads them to
@@ -84,17 +93,19 @@ func NewShipper(
 	dir string,
 	bucket objstore.Bucket,
 	source metadata.SourceType,
+	addOOOLabel bool,
 ) *Shipper {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
 
 	return &Shipper{
-		logger:  logger,
-		dir:     dir,
-		bucket:  bucket,
-		metrics: newMetrics(r),
-		source:  source,
+		logger:      logger,
+		dir:         dir,
+		bucket:      bucket,
+		metrics:     newMetrics(r),
+		source:      source,
+		addOOOLabel: addOOOLabel,
 	}
 }
 
@@ -192,6 +203,17 @@ func (s *Shipper) upload(ctx context.Context, meta *metadata.Meta) error {
 
 	meta.Thanos.Source = s.source
 	meta.Thanos.SegmentFiles = block.GetSegmentFiles(blockDir)
+
+	// Set out of order labels
+	if s.addOOOLabel && meta.Compaction.FromOutOfOrder() {
+		// At this point the OOO data was already ingested and compacted, so there's no point in checking for the OOO feature flag
+		meta.Thanos.Labels[OutOfOrderExternalLabelKey] = OutOfOrderExternalLabelValue
+	}
+
+	if s.addOOOLabel && meta.Compaction.FromOutOfOrder() {
+		// At this point the OOO data was already ingested and compacted, so there's no point in checking for the OOO feature flag
+		meta.Thanos.Labels[OutOfOrderExternalLabelKey] = OutOfOrderExternalLabelValue
+	}
 
 	// Upload block with custom metadata.
 	return block.Upload(ctx, s.logger, s.bucket, blockDir, meta)

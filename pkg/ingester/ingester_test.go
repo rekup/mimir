@@ -59,6 +59,7 @@ import (
 	"github.com/grafana/mimir/pkg/storage/sharding"
 	mimir_tsdb "github.com/grafana/mimir/pkg/storage/tsdb"
 	"github.com/grafana/mimir/pkg/storage/tsdb/block"
+	"github.com/grafana/mimir/pkg/storage/tsdb/metadata"
 	"github.com/grafana/mimir/pkg/usagestats"
 	"github.com/grafana/mimir/pkg/util"
 	"github.com/grafana/mimir/pkg/util/chunkcompat"
@@ -6212,140 +6213,152 @@ func Test_Ingester_OutOfOrder_CompactHead(t *testing.T) {
 
 // Test_Ingester_ShipperLabelsOutOfOrderBlocksOnUpload tests whether out-of-order
 // data is compacted and uploaded into a block that is labeled as being out-of-order.
+// It is only labeled if AddOutOfOrderExternalLabel is set to false.
 func Test_Ingester_ShipperLabelsOutOfOrderBlocksOnUpload(t *testing.T) {
-	const tenant = "test"
+	for _, addOOOLabel := range []bool{true, false} {
+		t.Run(fmt.Sprintf("AddOutOfOrderExternalLabel=%t", addOOOLabel), func(t *testing.T) {
+			const tenant = "test"
 
-	cfg := defaultIngesterTestConfig(t)
-	cfg.TSDBConfigUpdatePeriod = 1 * time.Second
+			cfg := defaultIngesterTestConfig(t)
+			cfg.TSDBConfigUpdatePeriod = 1 * time.Second
+			cfg.AddOutOfOrderExternalLabel = addOOOLabel
 
-	// See if we can set OOO directly
-	l := defaultLimitsTestConfig()
-	tenantOverride := new(TenantLimitsMock)
-	tenantOverride.On("ByUserID", "test").Return(nil)
-	override, err := validation.NewOverrides(l, tenantOverride)
-	require.NoError(t, err)
-
-	setOOOTimeWindow := func(oooTW model.Duration) {
-		tenantOverride.ExpectedCalls = nil
-		tenantOverride.On("ByUserID", "test").Return(&validation.Limits{
-			OutOfOrderTimeWindow: oooTW,
-		})
-		// TSDB config is updated every second.
-		<-time.After(1500 * time.Millisecond)
-	}
-
-	tmpDir := t.TempDir()
-	bucketDir := t.TempDir()
-	t.Cleanup(func() {
-		os.RemoveAll(tmpDir)
-		os.RemoveAll(bucketDir)
-	})
-
-	i, err := prepareIngesterWithBlockStorageAndOverrides(t, cfg, override, tmpDir, bucketDir, nil)
-	require.NoError(t, err)
-	require.NoError(t, services.StartAndAwaitRunning(context.Background(), i))
-	defer services.StopAndAwaitTerminated(context.Background(), i) //nolint:errcheck
-
-	// Wait until it's healthy
-	test.Poll(t, 1*time.Second, 1, func() interface{} {
-		return i.lifecycler.HealthyInstancesCount()
-	})
-
-	ctx := user.InjectOrgID(context.Background(), tenant)
-
-	pushSamples := func(start, end int64, expErr bool) {
-		start = start * time.Minute.Milliseconds()
-		end = end * time.Minute.Milliseconds()
-
-		s := labels.FromStrings(labels.MetricName, "test_1", "status", "200")
-		var samples []mimirpb.Sample
-		var lbls []labels.Labels
-		for ts := start; ts <= end; ts += time.Minute.Milliseconds() {
-			samples = append(samples, mimirpb.Sample{
-				TimestampMs: ts,
-				Value:       float64(ts),
-			})
-			lbls = append(lbls, s)
-		}
-
-		wReq := mimirpb.ToWriteRequest(lbls, samples, nil, nil, mimirpb.API)
-		_, err = i.Push(ctx, wReq)
-		if expErr {
-			require.Error(t, err, "should have failed on push")
-			require.ErrorAs(t, err, &storage.ErrTooOldSample)
-		} else {
+			// See if we can set OOO directly
+			l := defaultLimitsTestConfig()
+			tenantOverride := new(TenantLimitsMock)
+			tenantOverride.On("ByUserID", "test").Return(nil)
+			override, err := validation.NewOverrides(l, tenantOverride)
 			require.NoError(t, err)
-		}
-	}
 
-	verifySamples := func(start, end int64) {
-		start = start * time.Minute.Milliseconds()
-		end = end * time.Minute.Milliseconds()
+			setOOOTimeWindow := func(oooTW model.Duration) {
+				tenantOverride.ExpectedCalls = nil
+				tenantOverride.On("ByUserID", "test").Return(&validation.Limits{
+					OutOfOrderTimeWindow: oooTW,
+				})
+				// TSDB config is updated every second.
+				<-time.After(1500 * time.Millisecond)
+			}
 
-		var expSamples []model.SamplePair
-		for ts := start; ts <= end; ts += time.Minute.Milliseconds() {
-			expSamples = append(expSamples, model.SamplePair{
-				Timestamp: model.Time(ts),
-				Value:     model.SampleValue(ts),
+			tmpDir := t.TempDir()
+			bucketDir := t.TempDir()
+			t.Cleanup(func() {
+				os.RemoveAll(tmpDir)
+				os.RemoveAll(bucketDir)
 			})
-		}
-		expMatrix := model.Matrix{{
-			Metric: model.Metric{"__name__": "test_1", "status": "200"},
-			Values: expSamples,
-		}}
 
-		req := &client.QueryRequest{
-			StartTimestampMs: math.MinInt64,
-			EndTimestampMs:   math.MaxInt64,
-			Matchers: []*client.LabelMatcher{
-				{Type: client.EQUAL, Name: model.MetricNameLabel, Value: "test_1"},
-			},
-		}
+			i, err := prepareIngesterWithBlockStorageAndOverrides(t, cfg, override, tmpDir, bucketDir, nil)
+			require.NoError(t, err)
+			require.NoError(t, services.StartAndAwaitRunning(context.Background(), i))
+			defer services.StopAndAwaitTerminated(context.Background(), i) //nolint:errcheck
 
-		s := stream{ctx: ctx}
-		err = i.QueryStream(req, &s)
-		require.NoError(t, err)
+			// Wait until it's healthy
+			test.Poll(t, 1*time.Second, 1, func() interface{} {
+				return i.lifecycler.HealthyInstancesCount()
+			})
 
-		res, err := chunkcompat.StreamsToMatrix(model.Earliest, model.Latest, s.responses)
-		require.NoError(t, err)
-		assert.ElementsMatch(t, expMatrix, res)
+			ctx := user.InjectOrgID(context.Background(), tenant)
+
+			pushSamples := func(start, end int64, expErr bool) {
+				start = start * time.Minute.Milliseconds()
+				end = end * time.Minute.Milliseconds()
+
+				s := labels.FromStrings(labels.MetricName, "test_1", "status", "200")
+				var samples []mimirpb.Sample
+				var lbls []labels.Labels
+				for ts := start; ts <= end; ts += time.Minute.Milliseconds() {
+					samples = append(samples, mimirpb.Sample{
+						TimestampMs: ts,
+						Value:       float64(ts),
+					})
+					lbls = append(lbls, s)
+				}
+
+				wReq := mimirpb.ToWriteRequest(lbls, samples, nil, nil, mimirpb.API)
+				_, err = i.Push(ctx, wReq)
+				if expErr {
+					require.Error(t, err, "should have failed on push")
+					require.ErrorAs(t, err, &storage.ErrTooOldSample)
+				} else {
+					require.NoError(t, err)
+				}
+			}
+
+			verifySamples := func(start, end int64) {
+				start = start * time.Minute.Milliseconds()
+				end = end * time.Minute.Milliseconds()
+
+				var expSamples []model.SamplePair
+				for ts := start; ts <= end; ts += time.Minute.Milliseconds() {
+					expSamples = append(expSamples, model.SamplePair{
+						Timestamp: model.Time(ts),
+						Value:     model.SampleValue(ts),
+					})
+				}
+				expMatrix := model.Matrix{{
+					Metric: model.Metric{"__name__": "test_1", "status": "200"},
+					Values: expSamples,
+				}}
+
+				req := &client.QueryRequest{
+					StartTimestampMs: math.MinInt64,
+					EndTimestampMs:   math.MaxInt64,
+					Matchers: []*client.LabelMatcher{
+						{Type: client.EQUAL, Name: model.MetricNameLabel, Value: "test_1"},
+					},
+				}
+
+				s := stream{ctx: ctx}
+				err = i.QueryStream(req, &s)
+				require.NoError(t, err)
+
+				res, err := chunkcompat.StreamsToMatrix(model.Earliest, model.Latest, s.responses)
+				require.NoError(t, err)
+				assert.ElementsMatch(t, expMatrix, res)
+			}
+
+			// Push first in-order sample at minute 100.
+			pushSamples(100, 100, false)
+			verifySamples(100, 100)
+
+			// Increasing the OOO time window.
+			setOOOTimeWindow(model.Duration(30 * time.Minute))
+
+			// Push older, out-of-order samples
+			pushSamples(90, 99, false)
+			verifySamples(90, 100)
+
+			allowed := util.NewAllowedTenants([]string{tenant}, nil)
+
+			// Compact and upload the blocks
+			i.compactBlocks(ctx, true, allowed)
+			i.shipBlocks(ctx, allowed)
+
+			// Now check that an OOO block was uploaded and labeled correctly
+
+			bucket, err := filesystem.NewBucket(filepath.Join(bucketDir, tenant)) // need to add the tenant to the directory
+			require.NoError(t, err)
+
+			userTSDB := i.getTSDB(tenant)
+			require.Equal(t, 2, len(userTSDB.shippedBlocks), "there should be two uploaded blocks")
+
+			var foundMeta []metadata.Meta
+			for ulid := range userTSDB.shippedBlocks {
+				meta, err := block.DownloadMeta(ctx, log.NewNopLogger(), bucket, ulid)
+				require.NoError(t, err)
+				if meta.Compaction.FromOutOfOrder() {
+					foundMeta = append(foundMeta, meta)
+				}
+			}
+
+			require.Len(t, foundMeta, 1, "only one of the blocks should have an ooo compactor hint")
+
+			if addOOOLabel {
+				require.Equal(t, map[string]string{OutOfOrderExternalLabelKey: OutOfOrderExternalLabelValue}, foundMeta[0].Thanos.Labels)
+			} else {
+				require.Empty(t, foundMeta[0].Thanos.Labels)
+			}
+		})
 	}
-
-	// Push first in-order sample at minute 100.
-	pushSamples(100, 100, false)
-	verifySamples(100, 100)
-
-	// Increasing the OOO time window.
-	setOOOTimeWindow(model.Duration(30 * time.Minute))
-
-	// Push older, out-of-order samples
-	pushSamples(90, 99, false)
-	verifySamples(90, 100)
-
-	allowed := util.NewAllowedTenants([]string{tenant}, nil)
-
-	// Compact and upload the blocks
-	i.compactBlocks(ctx, true, allowed)
-	i.shipBlocks(ctx, allowed)
-
-	// Now check that an OOO block was uploaded and labeled correctly
-
-	bucket, err := filesystem.NewBucket(filepath.Join(bucketDir, tenant)) // need to add the tenant to the directory
-	require.NoError(t, err)
-
-	userTSDB := i.getTSDB(tenant)
-	require.Equal(t, 2, len(userTSDB.shippedBlocks), "there should be two uploaded blocks")
-
-	found := false
-	for ulid := range userTSDB.shippedBlocks {
-		meta, err := block.DownloadMeta(ctx, log.NewNopLogger(), bucket, ulid)
-		require.NoError(t, err)
-		if meta.Compaction.FromOutOfOrder() {
-			require.Equal(t, map[string]string{block.OutOfOrderExternalLabelKey: block.OutOfOrderExternalLabelValue}, meta.Thanos.Labels)
-			found = true
-		}
-	}
-	require.True(t, found, "at least one of the blocks should be labeled with out-of-order = true")
 }
 
 func TestNewIngestErrMsgs(t *testing.T) {

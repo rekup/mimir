@@ -172,6 +172,8 @@ type Config struct {
 	InstanceLimitsFn func() *InstanceLimits `yaml:"-"`
 
 	IgnoreSeriesLimitForMetricNames string `yaml:"ignore_series_limit_for_metric_names" category:"advanced"`
+
+	AddOutOfOrderExternalLabel bool `yaml:"add_ooo_external_label" category:"experimental"`
 }
 
 // RegisterFlags adds the flags required to config this to the given FlagSet
@@ -191,6 +193,8 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet, logger log.Logger) {
 	cfg.DefaultLimits.RegisterFlags(f)
 
 	f.StringVar(&cfg.IgnoreSeriesLimitForMetricNames, "ingester.ignore-series-limit-for-metric-names", "", "Comma-separated list of metric names, for which the -ingester.max-global-series-per-metric limit will be ignored. Does not affect the -ingester.max-global-series-per-user limit.")
+
+	f.BoolVar(&cfg.AddOutOfOrderExternalLabel, "ingester.add-out-of-order-external-label", false, "Adds an out-of-order external label to out of order blocks so they are only compacted with other out of order blocks.")
 }
 
 func (cfg *Config) getIgnoreSeriesLimitForMetricNamesMap() map[string]struct{} {
@@ -1817,6 +1821,7 @@ func (i *Ingester) createTSDB(userID string) (*userTSDB, error) {
 			udir,
 			bucket.NewUserBucketClient(userID, i.bucket, i.limits),
 			metadata.ReceiveSource,
+			i.cfg.AddOutOfOrderExternalLabel,
 		)
 
 		// Initialise the shipper blocks cache.
