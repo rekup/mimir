@@ -329,3 +329,130 @@ func TestReadThanosMetaFile(t *testing.T) {
 		require.Equal(t, "unexpected meta file version 2", err.Error())
 	})
 }
+
+func TestShipper_AddOOOLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		addOOOLabel               bool
+		meta                      metadata.Meta
+		oooCompactionHintExpected bool
+		expectedLabels            map[string]string
+	}{
+		{
+			name:        "in-order block, addOOOLabel = false",
+			addOOOLabel: false,
+			meta: metadata.Meta{
+				BlockMeta: tsdb.BlockMeta{
+					ULID:    ulid.MustNew(1, nil),
+					MaxTime: 2000,
+					MinTime: 1000,
+					Version: 1,
+					Stats: tsdb.BlockStats{
+						NumSamples: 100, // Shipper checks if number of samples is greater than 0.
+					},
+				},
+			},
+			oooCompactionHintExpected: false,
+			expectedLabels:            map[string]string{},
+		},
+		{
+			name:        "in-order block, addOOOLabel = true",
+			addOOOLabel: false,
+			meta: metadata.Meta{
+				BlockMeta: tsdb.BlockMeta{
+					ULID:    ulid.MustNew(1, nil),
+					MaxTime: 2000,
+					MinTime: 1000,
+					Version: 1,
+					Stats: tsdb.BlockStats{
+						NumSamples: 100, // Shipper checks if number of samples is greater than 0.
+					},
+				},
+			},
+			oooCompactionHintExpected: false,
+			expectedLabels:            map[string]string{},
+		},
+		{
+			name:        "OOO block, addOOOLabel = false",
+			addOOOLabel: false,
+			meta: metaWithOOOHint(metadata.Meta{
+				BlockMeta: tsdb.BlockMeta{
+					ULID:    ulid.MustNew(1, nil),
+					MaxTime: 2000,
+					MinTime: 1000,
+					Version: 1,
+					Stats: tsdb.BlockStats{
+						NumSamples: 100, // Shipper checks if number of samples is greater than 0.
+					},
+				},
+			}),
+			oooCompactionHintExpected: true,
+			expectedLabels:            map[string]string{},
+		},
+		{
+			name:        "OOO block, addOOOLabel = true",
+			addOOOLabel: true,
+			meta: metaWithOOOHint(metadata.Meta{
+				BlockMeta: tsdb.BlockMeta{
+					ULID:    ulid.MustNew(1, nil),
+					MaxTime: 2000,
+					MinTime: 1000,
+					Version: 1,
+					Stats: tsdb.BlockStats{
+						NumSamples: 100, // Shipper checks if number of samples is greater than 0.
+					},
+				},
+			}),
+			oooCompactionHintExpected: true,
+			expectedLabels:            map[string]string{OutOfOrderExternalLabelKey: OutOfOrderExternalLabelValue},
+		},
+		{
+			name:        "OOO block, addOOOLabel = true, additional labels",
+			addOOOLabel: true,
+			meta: metaWithOOOHint(metadata.Meta{
+				BlockMeta: tsdb.BlockMeta{
+					ULID:    ulid.MustNew(1, nil),
+					MaxTime: 2000,
+					MinTime: 1000,
+					Version: 1,
+					Stats: tsdb.BlockStats{
+						NumSamples: 100, // Shipper checks if number of samples is greater than 0.
+					},
+				},
+				Thanos: metadata.Thanos{Labels: map[string]string{"a": "b"}},
+			}),
+			oooCompactionHintExpected: true,
+			expectedLabels:            map[string]string{"a": "b", OutOfOrderExternalLabelKey: OutOfOrderExternalLabelValue},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			blocksDir := t.TempDir()
+			bucketDir := t.TempDir()
+
+			bkt, err := filesystem.NewBucketClient(filesystem.Config{Directory: bucketDir})
+			require.NoError(t, err)
+
+			logs := &concurrency.SyncBuffer{}
+			logger := log.NewLogfmtLogger(logs)
+
+			s := NewShipper(logger, nil, blocksDir, bkt, metadata.TestSource, tc.addOOOLabel)
+
+			createBlock(t, blocksDir, tc.meta.ULID, tc.meta)
+
+			// Let shipper sync the blocks.
+			uploaded, err := s.Sync(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, 1, uploaded)
+
+			// Verify uploaded meta
+			readMeta, err := block.DownloadMeta(context.Background(), log.NewNopLogger(), bkt, tc.meta.ULID)
+			require.Equal(t, tc.oooCompactionHintExpected, readMeta.Compaction.FromOutOfOrder())
+			require.Equal(t, tc.expectedLabels, readMeta.Thanos.Labels)
+		})
+	}
+}
+
+func metaWithOOOHint(meta metadata.Meta) metadata.Meta {
+	meta.Compaction.SetOutOfOrder()
+	return meta
+}
