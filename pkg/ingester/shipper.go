@@ -210,11 +210,6 @@ func (s *Shipper) upload(ctx context.Context, meta *metadata.Meta) error {
 		meta.Thanos.Labels[OutOfOrderExternalLabelKey] = OutOfOrderExternalLabelValue
 	}
 
-	if s.addOOOLabel && meta.Compaction.FromOutOfOrder() {
-		// At this point the OOO data was already ingested and compacted, so there's no point in checking for the OOO feature flag
-		meta.Thanos.Labels[OutOfOrderExternalLabelKey] = OutOfOrderExternalLabelValue
-	}
-
 	// Upload block with custom metadata.
 	return block.Upload(ctx, s.logger, s.bucket, blockDir, meta)
 }
