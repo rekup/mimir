@@ -987,6 +987,8 @@ Usage of ./cmd/mimir/mimir:
     	After what time a series is considered to be inactive. (default 10m0s)
   -ingester.active-series-metrics-update-period duration
     	How often to update active series metrics. (default 1m0s)
+  -ingester.add-out-of-order-external-label
+    	[experimental] Adds an out-of-order external label to out of order blocks so they are only compacted with other out of order blocks.
   -ingester.client.backoff-max-period duration
     	Maximum delay when backing off. (default 10s)
   -ingester.client.backoff-min-period duration

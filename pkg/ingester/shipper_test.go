@@ -446,6 +446,7 @@ func TestShipper_AddOOOLabel(t *testing.T) {
 
 			// Verify uploaded meta
 			readMeta, err := block.DownloadMeta(context.Background(), log.NewNopLogger(), bkt, tc.meta.ULID)
+			require.NoError(t, err)
 			require.Equal(t, tc.oooCompactionHintExpected, readMeta.Compaction.FromOutOfOrder())
 			require.Equal(t, tc.expectedLabels, readMeta.Thanos.Labels)
 		})

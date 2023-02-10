@@ -2816,6 +2816,17 @@
           "fieldFlag": "ingester.ignore-series-limit-for-metric-names",
           "fieldType": "string",
           "fieldCategory": "advanced"
+        },
+        {
+          "kind": "field",
+          "name": "add_ooo_external_label",
+          "required": false,
+          "desc": "Adds an out-of-order external label to out of order blocks so they are only compacted with other out of order blocks.",
+          "fieldValue": null,
+          "fieldDefaultValue": false,
+          "fieldFlag": "ingester.add-out-of-order-external-label",
+          "fieldType": "boolean",
+          "fieldCategory": "experimental"
         }
       ],
       "fieldValue": null,
