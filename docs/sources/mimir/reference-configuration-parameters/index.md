@@ -951,6 +951,11 @@ instance_limits:
 # the -ingester.max-global-series-per-user limit.
 # CLI flag: -ingester.ignore-series-limit-for-metric-names
 [ignore_series_limit_for_metric_names: <string> | default = ""]
+
+# (experimental) Adds an out-of-order external label to out of order blocks so
+# they are only compacted with other out of order blocks.
+# CLI flag: -ingester.add-out-of-order-external-label
+[add_ooo_external_label: <boolean> | default = false]
 ```
 
 ### querier
